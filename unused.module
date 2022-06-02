@@ -1,0 +1,171 @@
+<?php
+/**
+ * @file
+ * Provides a list of unused core modules on your site.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function unused_menu() {
+  return array(
+    'admin/reports/unused' => array(
+      'title' => 'Unused',
+      'description' => 'Overview of unused core modules.',
+      'page callback' => 'unused_page',
+      'access arguments' => array('access site reports'),
+      'type' => MENU_NORMAL_ITEM,
+    ),
+  );
+}
+
+/**
+ * Page callback: Lists unused core modules.
+ *
+ * @return string
+ *   An HTML-formatted string with the Unused page content.
+ */
+function unused_page() {
+  $page = array(
+    'help' => array(
+      '#type' => 'help',
+      '#markup' => t('These modules are unused and can be uninstalled. But do so at your own risk and always take a backup of your database and/or config first.'),
+    ),
+  );
+
+  $rows = array();
+  foreach (module_invoke_all('unused') as $module) {
+    $name = $module['name'];
+    $reason = $module['reason'];
+    $status = $module['status'] ? t('Enabled') : t('Disabled');
+
+    $rows[] = array($name, $reason, $status);
+  }
+
+  $page['table'] = array(
+    '#theme' => 'table',
+    '#header' => array(t('Module'), t('Reason'), t('Status')),
+    '#rows' => $rows,
+    '#empty' => t('All modules are being used!'),
+  );
+
+  return $page;
+}
+
+/**
+ * Implements hook_unused() on behalf of all core modules.
+ */
+function unused_unused() {
+  $modules = array();
+
+  foreach (system_rebuild_module_data() as $module_info) {
+    $info = $module_info->info;
+    $reason = '';
+
+    // Ignore any modules that are required, hidden or already uninstalled.
+    if (!empty($info['required']) || !empty($info['hidden']) || (!$module_info->status && $module_info->schema_version == -1)) {
+      continue;
+    }
+    dpm($module_info->name);
+
+    // Check core modules.
+    switch ($module_info->name) {
+      case 'admin_bar':
+        // Check for enabled components in config.
+        if (empty(config_get('admin_bar.settings', 'components'))) {
+          $reason = t('All <a href="@admin_bar">components</a> are disabled.', array(
+            '@admin_bar' => url('admin/config/administration/admin-bar'),
+          ));
+        }
+        break;
+
+      case 'block':
+        // Check for any custom blocks.
+        if (empty(block_block_info())) {
+          $reason = t('There are no <a href="@blocks">custom blocks</a>.', array(
+            '@blocks' => url('admin/structure/block'),
+          ));
+        }
+        break;
+
+      case 'ckeditor':
+        // Check for any text formats that use CKEditor.
+        $enabled = FALSE;
+        foreach (filter_formats() as $format) {
+          if ($format->editor == 'ckeditor') {
+            $enabled = TRUE;
+            break;
+          }
+        }
+        if (!$enabled) {
+          $reason = t('None of the enabled <a href="@formats">text formats</a> use CKEditor.', array(
+            '@formats' => url('admin/config/content/formats'),
+          ));
+        }
+        break;
+
+      case 'color':
+        // Check for any themes with Color support.
+        $support = FALSE;
+        foreach (list_themes() as $theme) {
+          if ($theme->status && !empty($theme->info['settings']['color'])) {
+            $support = TRUE;
+            break;
+          }
+        }
+        if (!$support) {
+          $reason = t('None of the enabled <a href="@themes">themes</a> have Color support.', array(
+            '@themes' => url('admin/appearance'),
+          ));
+        }
+        break;
+
+      case 'comment':
+        // Check for any comments and comment-enabled nodes.
+        $comments = entity_load_multiple('comment');
+        $query = new EntityFieldQuery();
+        $comment_nodes = $query->entityCondition('entity_type', 'node')
+          ->propertyCondition('comment', 2, '<')
+          ->execute();
+        if (empty($comments) && empty($comment_nodes)) {
+          $reason = t('There are no <a href="@comments">comments</a> and no comment-enabled <a href="@nodes">nodes</a>.', array(
+            '@comments' => url('admin/content/comment'),
+            '@nodes' => url('admin/content'),
+          ));
+        }
+        break;
+
+      case 'config':
+        // Check roles with permission to access configuration pages.
+        if (empty(user_roles(FALSE, 'synchronize configuration'))) {
+          $reason = t('There are no roles with the "Synchronize, import, and export configuration" <a href="@permissions">permission</a>.', array(
+            '@permissions' => url('admin/config/people/permissions'),
+          ));
+        }
+        break;
+
+      case 'contextual':
+        // Check roles with permission to use contextual links.
+        if (empty(user_roles(FALSE, 'access contextual links'))) {
+          $reason = t('There are no roles with the "Use contextual links" <a href="@permissions">permission</a>.', array(
+            '@permissions' => url('admin/config/people/permissions'),
+          ));
+        }
+        break;
+
+      default:
+        continue 2;
+    }
+
+    // Add modules that have provided a reason for being unused.
+    if (!empty($reason)) {
+      $modules[$module_info->name] = array(
+        'name' => $info['name'],
+        'reason' => $reason,
+        'status' => $module_info->status,
+      );
+    }
+  }
+
+  return $modules;
+}
