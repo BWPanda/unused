@@ -137,18 +137,89 @@ function unused_unused() {
 
       case 'config':
         // Check roles with permission to access configuration pages.
-        if (empty(user_roles(FALSE, 'synchronize configuration'))) {
-          $reason = t('There are no roles with the "Synchronize, import, and export configuration" <a href="@permissions">permission</a>.', array(
-            '@permissions' => url('admin/config/people/permissions'),
-          ));
-        }
+        $reason = unused_check_permission('synchronize configuration');
         break;
 
       case 'contextual':
         // Check roles with permission to use contextual links.
-        if (empty(user_roles(FALSE, 'access contextual links'))) {
-          $reason = t('There are no roles with the "Use contextual links" <a href="@permissions">permission</a>.', array(
-            '@permissions' => url('admin/config/people/permissions'),
+        $reason = unused_check_permission('access contextual links');
+        break;
+
+      case 'dashboard':
+        // Check roles with permission to access the dashboard.
+        $reason = unused_check_permission('access dashboard');
+        break;
+
+      case 'date':
+        // Check for any date fields.
+        $reason = unused_check_fields('date', array('date', 'datetime', 'datestamp'));
+        break;
+
+      case 'dblog':
+        // The only way DBLog can be unused is if no one has access to view the
+        // logs. But since the permission for that is 'access site reports' and
+        // that same permission is used to view this page, then there's no
+        // point showing anything here.
+        continue 2;
+
+      case 'email':
+        // Check for any email fields.
+        $reason = unused_check_fields('email', array('email'));
+        break;
+
+      case 'field_ui':
+        // Field UI has many pages with various permissions for accessing them,
+        // so it's too complicated to check if it's being used or not.
+        continue 2;
+
+      case 'image':
+        // Image module provides default image styles which cannot be deleted.
+        // Since these could be used in any number of places, it's impossible to
+        // tell if this module's in use or not.
+        continue 2;
+
+      case 'installer':
+        // Check roles with permission to install projects.
+        $reason = unused_check_permission('use installer browser');
+        break;
+
+      case 'link':
+        // Check for any link fields.
+        $reason = unused_check_fields('link', array('link_field'));
+        break;
+
+      case 'list':
+        // Check for any list fields.
+        $reason = unused_check_fields('list', array('list_float', 'list_integer', 'list_text'));
+        break;
+
+      case 'menu':
+        // Check roles with permission to administer menus.
+        $reason = unused_check_permission('administer menu');
+        break;
+
+      case 'number':
+        // Check for any number fields.
+        $reason = unused_check_fields('number', array('number_decimal', 'number_float', 'number_integer'));
+        break;
+
+      case 'options':
+        // Check for fields using options widgets.
+        $field_types = array();
+        $widgets = module_invoke_all('field_widget_info');
+        backdrop_alter('field_widget_info', $widgets);
+        foreach ($widgets as $name => $widget) {
+          if (in_array($name, array('options_select', 'options_buttons', 'options_onoff'))) {
+            foreach ($widget['field types'] as $type) {
+              if (!in_array($type, $field_types)) {
+                $field_types[] = $type;
+              }
+            }
+          }
+        }
+        if (!empty(unused_check_fields('options', $field_types))) {
+          $reason = t('There are no <a href="@fields_url">fields</a> using an options widget.', array(
+            '@fields_url' => url('admin/reports/fields'),
           ));
         }
         break;
@@ -168,4 +239,76 @@ function unused_unused() {
   }
 
   return $modules;
+}
+
+/**
+ * Check if fields of a certain type exist.
+ *
+ * @param string $field_name
+ *   The name of the type of field we're checking for, for use in the return
+ *   message (e.g. 'list', 'number', etc.).
+ * @param array $field_types
+ *   An array of field types to check.
+ *
+ * @return string
+ *   The translated message to display if no fields were found, or an empty
+ *   string otherwise.
+ */
+function unused_check_fields($field_name, $field_types) {
+  $fields = &backdrop_static(__FUNCTION__);
+  $field_exists = FALSE;
+  $message = '';
+
+  // Cache the list of fields for performance.
+  if (!isset($fields)) {
+    $fields = field_info_fields();
+  }
+
+  // Check if there are any fields of the given type(s).
+  foreach ($fields as $field) {
+    if (in_array($field['type'], $field_types)) {
+      $field_exists = TRUE;
+      break;
+    }
+  }
+
+  // Set a message saying there are no fields of that type.
+  if (!$field_exists) {
+    $message = t('There are no @field_name <a href="@fields_url">fields</a>.', array(
+      '@field_name' => $field_name,
+      '@fields_url' => url('admin/reports/fields'),
+    ));
+  }
+
+  return $message;
+}
+
+/**
+ * Check if a given permission is enabled for any role.
+ *
+ * @param string $permission
+ *   The permission to check.
+ *
+ * @return string
+ *   The translated message to display if no roles have the given permission, or
+ *   an empty string otherwise.
+ */
+function unused_check_permission($permission) {
+  $permissions = &backdrop_static(__FUNCTION__);
+  $message = '';
+
+  // Cache the list of permissions for performance.
+  if (!isset($permissions)) {
+    $permissions = module_invoke_all('permission');
+  }
+
+  // Set a message saying there are no roles with that permission.
+  if (empty(user_roles(FALSE, $permission))) {
+    $message = t('There are no roles with the "@permission_name" <a href="@permissions">permission</a>.', array(
+      '@permission_name' => $permissions[$permission]['title'],
+      '@permissions' => url('admin/config/people/permissions'),
+    ));
+  }
+
+  return $message;
 }
