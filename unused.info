@@ -1,6 +1,6 @@
 type = module
 name = Unused
-description = Provides a list of unused core modules on your site.
+description = Displays a report of unused modules on your site.
 backdrop = 1.x
 configure = admin/reports/unused
 package = Administration

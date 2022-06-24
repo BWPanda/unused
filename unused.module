@@ -10,7 +10,7 @@
 function unused_menu() {
   return array(
     'admin/reports/unused' => array(
-      'title' => 'Unused',
+      'title' => 'Unused modules',
       'description' => 'Overview of unused core modules.',
       'page callback' => 'unused_page',
       'access arguments' => array('access site reports'),
@@ -29,17 +29,19 @@ function unused_page() {
   $page = array(
     'help' => array(
       '#type' => 'help',
-      '#markup' => t('These modules are unused and can be uninstalled. But do so at your own risk and always take a backup of your database and/or config first.'),
+      '#markup' => t("This page lists modules that are considered 'unused' and can therefore be uninstalled. The 'Reason' column describes the criteria used to determine why a module is unused. Uninstall modules at your own risk, and always take a backup of your database and/or config first."),
     ),
   );
 
   $rows = array();
-  foreach (module_invoke_all('unused') as $module) {
-    $name = $module['name'];
-    $reason = $module['reason'];
-    $status = $module['status'] ? t('Enabled') : t('Disabled');
+  $all_modules = system_rebuild_module_data();
+  foreach (module_invoke_all('unused') as $module_name => $reason) {
+    if ($reason) {
+      $name = $all_modules[$module_name]->info['name'];
+      $status = $all_modules[$module_name]->status ? t('Enabled') : t('Disabled');
 
-    $rows[] = array($name, $reason, $status);
+      $rows[] = array($name, $reason, $status);
+    }
   }
 
   $page['table'] = array(
@@ -58,185 +60,163 @@ function unused_page() {
 function unused_unused() {
   $modules = array();
 
-  foreach (system_rebuild_module_data() as $module_info) {
-    $info = $module_info->info;
-    $reason = '';
+  // Administration Bar: Check for enabled components in config.
+  if (empty(config_get('admin_bar.settings', 'components'))) {
+    $modules['admin_bar'] = t('All <a href="@admin_bar">components</a> are disabled.', array(
+      '@admin_bar' => url('admin/config/administration/admin-bar'),
+    ));
+  }
 
-    // Ignore any modules that are required, hidden or already uninstalled.
-    if (!empty($info['required']) || !empty($info['hidden']) || (!$module_info->status && $module_info->schema_version == -1)) {
-      continue;
-    }
-    dpm($module_info->name);
+  // Block: Check for any custom blocks.
+  if (empty(block_block_info())) {
+    $modules['block'] = t('There are no <a href="@blocks">custom blocks</a>.', array(
+      '@blocks' => url('admin/structure/block'),
+    ));
+  }
 
-    // Check core modules.
-    switch ($module_info->name) {
-      case 'admin_bar':
-        // Check for enabled components in config.
-        if (empty(config_get('admin_bar.settings', 'components'))) {
-          $reason = t('All <a href="@admin_bar">components</a> are disabled.', array(
-            '@admin_bar' => url('admin/config/administration/admin-bar'),
-          ));
-        }
-        break;
-
-      case 'block':
-        // Check for any custom blocks.
-        if (empty(block_block_info())) {
-          $reason = t('There are no <a href="@blocks">custom blocks</a>.', array(
-            '@blocks' => url('admin/structure/block'),
-          ));
-        }
-        break;
-
-      case 'ckeditor':
-        // Check for any text formats that use CKEditor.
-        $enabled = FALSE;
-        foreach (filter_formats() as $format) {
-          if ($format->editor == 'ckeditor') {
-            $enabled = TRUE;
-            break;
-          }
-        }
-        if (!$enabled) {
-          $reason = t('None of the enabled <a href="@formats">text formats</a> use CKEditor.', array(
-            '@formats' => url('admin/config/content/formats'),
-          ));
-        }
-        break;
-
-      case 'color':
-        // Check for any themes with Color support.
-        $support = FALSE;
-        foreach (list_themes() as $theme) {
-          if ($theme->status && !empty($theme->info['settings']['color'])) {
-            $support = TRUE;
-            break;
-          }
-        }
-        if (!$support) {
-          $reason = t('None of the enabled <a href="@themes">themes</a> have Color support.', array(
-            '@themes' => url('admin/appearance'),
-          ));
-        }
-        break;
-
-      case 'comment':
-        // Check for any comments and comment-enabled nodes.
-        $comments = entity_load_multiple('comment');
-        $query = new EntityFieldQuery();
-        $comment_nodes = $query->entityCondition('entity_type', 'node')
-          ->propertyCondition('comment', 2, '<')
-          ->execute();
-        if (empty($comments) && empty($comment_nodes)) {
-          $reason = t('There are no <a href="@comments">comments</a> and no comment-enabled <a href="@nodes">nodes</a>.', array(
-            '@comments' => url('admin/content/comment'),
-            '@nodes' => url('admin/content'),
-          ));
-        }
-        break;
-
-      case 'config':
-        // Check roles with permission to access configuration pages.
-        $reason = unused_check_permission('synchronize configuration');
-        break;
-
-      case 'contextual':
-        // Check roles with permission to use contextual links.
-        $reason = unused_check_permission('access contextual links');
-        break;
-
-      case 'dashboard':
-        // Check roles with permission to access the dashboard.
-        $reason = unused_check_permission('access dashboard');
-        break;
-
-      case 'date':
-        // Check for any date fields.
-        $reason = unused_check_fields('date', array('date', 'datetime', 'datestamp'));
-        break;
-
-      case 'dblog':
-        // The only way DBLog can be unused is if no one has access to view the
-        // logs. But since the permission for that is 'access site reports' and
-        // that same permission is used to view this page, then there's no
-        // point showing anything here.
-        continue 2;
-
-      case 'email':
-        // Check for any email fields.
-        $reason = unused_check_fields('email', array('email'));
-        break;
-
-      case 'field_ui':
-        // Field UI has many pages with various permissions for accessing them,
-        // so it's too complicated to check if it's being used or not.
-        continue 2;
-
-      case 'image':
-        // Image module provides default image styles which cannot be deleted.
-        // Since these could be used in any number of places, it's impossible to
-        // tell if this module's in use or not.
-        continue 2;
-
-      case 'installer':
-        // Check roles with permission to install projects.
-        $reason = unused_check_permission('use installer browser');
-        break;
-
-      case 'link':
-        // Check for any link fields.
-        $reason = unused_check_fields('link', array('link_field'));
-        break;
-
-      case 'list':
-        // Check for any list fields.
-        $reason = unused_check_fields('list', array('list_float', 'list_integer', 'list_text'));
-        break;
-
-      case 'menu':
-        // Check roles with permission to administer menus.
-        $reason = unused_check_permission('administer menu');
-        break;
-
-      case 'number':
-        // Check for any number fields.
-        $reason = unused_check_fields('number', array('number_decimal', 'number_float', 'number_integer'));
-        break;
-
-      case 'options':
-        // Check for fields using options widgets.
-        $field_types = array();
-        $widgets = module_invoke_all('field_widget_info');
-        backdrop_alter('field_widget_info', $widgets);
-        foreach ($widgets as $name => $widget) {
-          if (in_array($name, array('options_select', 'options_buttons', 'options_onoff'))) {
-            foreach ($widget['field types'] as $type) {
-              if (!in_array($type, $field_types)) {
-                $field_types[] = $type;
-              }
-            }
-          }
-        }
-        if (!empty(unused_check_fields('options', $field_types))) {
-          $reason = t('There are no <a href="@fields_url">fields</a> using an options widget.', array(
-            '@fields_url' => url('admin/reports/fields'),
-          ));
-        }
-        break;
-
-      default:
-        continue 2;
-    }
-
-    // Add modules that have provided a reason for being unused.
-    if (!empty($reason)) {
-      $modules[$module_info->name] = array(
-        'name' => $info['name'],
-        'reason' => $reason,
-        'status' => $module_info->status,
-      );
+  // CKEditor: Check for any text formats that use CKEditor.
+  $enabled = FALSE;
+  foreach (filter_formats() as $format) {
+    if ($format->editor == 'ckeditor') {
+      $enabled = TRUE;
+      break;
     }
   }
+  if (!$enabled) {
+    $modules['ckeditor'] = t('None of the enabled <a href="@formats">text formats</a> use CKEditor.', array(
+      '@formats' => url('admin/config/content/formats'),
+    ));
+  }
+
+  // Color: Check for any themes with Color support.
+  $support = FALSE;
+  foreach (list_themes() as $theme) {
+    if ($theme->status && !empty($theme->info['settings']['color'])) {
+      $support = TRUE;
+      break;
+    }
+  }
+  if (!$support) {
+    $modules['color'] = t('None of the enabled <a href="@themes">themes</a> have Color support.', array(
+      '@themes' => url('admin/appearance'),
+    ));
+  }
+
+  // Comment: Check for any comments and comment-enabled nodes.
+  $comments = entity_load_multiple('comment');
+  $query = new EntityFieldQuery();
+  $comment_nodes = $query->entityCondition('entity_type', 'node')
+    ->propertyCondition('comment', 2, '<')
+    ->execute();
+  if (empty($comments) && empty($comment_nodes)) {
+    $modules['comment'] = t('There are no <a href="@comments">comments</a> and no comment-enabled <a href="@nodes">nodes</a>.', array(
+      '@comments' => url('admin/content/comment'),
+      '@nodes' => url('admin/content'),
+    ));
+  }
+
+  // Configuration Manager: Check roles with permission to access configuration
+  // pages.
+  $modules['config'] = unused_check_permission('synchronize configuration');
+
+  // Contextual Links: Check roles with permission to use contextual links.
+  $modules['contextual'] = unused_check_permission('access contextual links');
+
+  // Dashboard: Check roles with permission to access the dashboard.
+  $modules['dashboard'] = unused_check_permission('access dashboard');
+
+  // Date: Check for any date fields.
+  $modules['date'] = unused_check_fields('date', array('date', 'datetime', 'datestamp'));
+
+  // Database Logging: The only way DBLog can be unused is if no one has access
+  // to view the logs. But since the permission for that is 'access site
+  // reports' and that same permission is used to view this page, then there's
+  // no point showing anything here.
+  $modules['dblog'] = FALSE;
+
+  // Email: Check for any email fields.
+  $modules['email'] = unused_check_fields('email', array('email'));
+
+  // Field UI: This has many pages with various permissions for accessing them,
+  // so it's too complicated to check if it's being used or not.
+  $modules['field_ui'] = FALSE;
+
+  // Image: This module provides default image styles which cannot be deleted.
+  // Since these could be used in any number of places, it's impossible to tell
+  // if this module's in use or not.
+  $modules['image'] = FALSE;
+
+  // Project Installer: Check roles with permission to install projects.
+  $modules['installer'] = unused_check_permission('use installer browser');
+
+  // Link: Check for any link fields.
+  $modules['link'] = unused_check_fields('link', array('link_field'));
+
+  // List: Check for any list fields.
+  $modules['list'] = unused_check_fields('list', array('list_float', 'list_integer', 'list_text'));
+
+  // Menu: Check roles with permission to administer menus.
+  $modules['menu'] = unused_check_permission('administer menu');
+
+  // Number: Check for any number fields.
+  $modules['number'] = unused_check_fields('number', array('number_decimal', 'number_float', 'number_integer'));
+
+  // Options: Check for fields using options widgets.
+  $field_types = array();
+  $widgets = module_invoke_all('field_widget_info');
+  backdrop_alter('field_widget_info', $widgets);
+  foreach ($widgets as $name => $widget) {
+    if (in_array($name, array('options_select', 'options_buttons', 'options_onoff'))) {
+      foreach ($widget['field types'] as $type) {
+        if (!in_array($type, $field_types)) {
+          $field_types[] = $type;
+        }
+      }
+    }
+  }
+  if (!empty(unused_check_fields('options', $field_types))) {
+    $modules['options'] = t('There are no <a href="@fields_url">fields</a> using an options widget.', array(
+      '@fields_url' => url('admin/reports/fields'),
+    ));
+  }
+
+  // Path: Check for URL aliases in the database.
+  $pid = db_query_range("SELECT pid FROM {url_alias}", 0, 1)->fetchField();
+  if (empty($pid)) {
+    $modules['path'] = t('There are no <a href="@aliases">URL aliases</a>.', array(
+      '@aliases' => url('admin/config/urls/path'),
+    ));
+  }
+
+  // Redirect: Check for redirects in the database.
+  $rid = db_query_range("SELECT rid FROM {redirect}", 0, 1)->fetchField();
+  if (empty($rid)) {
+    $modules['redirect'] = t('There are no <a href="@redirects">URL redirects</a>.', array(
+      '@redirects' => url('admin/config/urls/redirect'),
+    ));
+  }
+
+  // Search: Check roles with permission to use search.
+  $modules['search'] = unused_check_permission('search content');
+
+  // Taxonomy: Check for vocabularies.
+  $vocabularies = taxonomy_vocabulary_load_multiple(FALSE);
+  if (empty($vocabularies)) {
+    $modules['taxonomy'] = t('There are no <a href="@taxonomy">vocabularies</a>.', array(
+      '@taxonomy' => url('admin/structure/taxonomy'),
+    ));
+  }
+
+  // Telemetry: When enabled, Telemetry is always being used.
+  $modules['telemetry'] = FALSE;
+
+  // Update Manager: This uses generic permissions so it's impossible to tell
+  // whether it's used or not.
+  $modules['update'] = FALSE;
+
+  // Views UI: This  doesn't have its own permissions, so there's nothing to
+  // check here.
+  $modules['views_ui'] = FALSE;
 
   return $modules;
 }
@@ -250,14 +230,14 @@ function unused_unused() {
  * @param array $field_types
  *   An array of field types to check.
  *
- * @return string
- *   The translated message to display if no fields were found, or an empty
- *   string otherwise.
+ * @return string|FALSE
+ *   The translated message to display if no fields were found, or FALSE
+ *   otherwise.
  */
 function unused_check_fields($field_name, $field_types) {
   $fields = &backdrop_static(__FUNCTION__);
   $field_exists = FALSE;
-  $message = '';
+  $reason = FALSE;
 
   // Cache the list of fields for performance.
   if (!isset($fields)) {
@@ -274,13 +254,13 @@ function unused_check_fields($field_name, $field_types) {
 
   // Set a message saying there are no fields of that type.
   if (!$field_exists) {
-    $message = t('There are no @field_name <a href="@fields_url">fields</a>.', array(
+    $reason = t('There are no @field_name <a href="@fields_url">fields</a>.', array(
       '@field_name' => $field_name,
       '@fields_url' => url('admin/reports/fields'),
     ));
   }
 
-  return $message;
+  return $reason;
 }
 
 /**
@@ -289,13 +269,13 @@ function unused_check_fields($field_name, $field_types) {
  * @param string $permission
  *   The permission to check.
  *
- * @return string
+ * @return string|FALSE
  *   The translated message to display if no roles have the given permission, or
- *   an empty string otherwise.
+ *   FALSE otherwise.
  */
 function unused_check_permission($permission) {
   $permissions = &backdrop_static(__FUNCTION__);
-  $message = '';
+  $reason = FALSE;
 
   // Cache the list of permissions for performance.
   if (!isset($permissions)) {
@@ -304,11 +284,11 @@ function unused_check_permission($permission) {
 
   // Set a message saying there are no roles with that permission.
   if (empty(user_roles(FALSE, $permission))) {
-    $message = t('There are no roles with the "@permission_name" <a href="@permissions">permission</a>.', array(
+    $reason = t('There are no roles with the "@permission_name" <a href="@permissions">permission</a>.', array(
       '@permission_name' => $permissions[$permission]['title'],
       '@permissions' => url('admin/config/people/permissions'),
     ));
   }
 
-  return $message;
+  return $reason;
 }
