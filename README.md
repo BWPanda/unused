@@ -26,7 +26,7 @@ https://github.com/backdrop-contrib/unused/issues.
 Current Maintainers
 -------------------
 
-- [Peter Anderson](https://github.com/BWPanda)
+- Seeking maintainer(s)
 
 Credits
 -------
